@@ -16,6 +16,12 @@ whx_airdrop = "Fbu5VVHh6UEBbtAZ2sNB1WzyacZeZXV6TTxsx2jMGZFq"
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
+[test.validator]
+
+[[test.validator.account]]
+address = "6nDd6Y4SEpURbzArtg3GffL2Ltw16FD2SMKfyUnX7SXf"
+filename = "tests/fixtures/mock_lb_pair.json"
+
 [scripts]
 test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 

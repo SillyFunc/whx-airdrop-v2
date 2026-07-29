@@ -30,35 +30,8 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
   let globalConfigPda: PublicKey;
   let globalConfigBump: number;
 
-  let realMarketLbPairKeypair: Keypair;
-
-  async function createMockLbPair(activeId: number, binStep: number, payer: Keypair): Promise<Keypair> {
-    const lbPairKeypair = Keypair.generate();
-    const space = 130;
-    const lamports = await provider.connection.getMinimumBalanceForRentExemption(space);
-
-    const tx = new anchor.web3.Transaction().add(
-      SystemProgram.createAccount({
-        fromPubkey: payer.publicKey,
-        newAccountPubkey: lbPairKeypair.publicKey,
-        lamports,
-        space,
-        programId: program.programId,
-      })
-    );
-    await provider.sendAndConfirm(tx, [payer, lbPairKeypair]);
-
-    await program.methods
-      .setLbPair(activeId, binStep)
-      .accounts({
-        payer: payer.publicKey,
-        lbPair: lbPairKeypair.publicKey,
-      })
-      .signers([payer])
-      .rpc();
-
-    return lbPairKeypair;
-  }
+  // Mainnet Meteora DLMM Pool Address (Loaded via localnet fixture: active_id = -2049, bin_step = 10 -> 1 USDT ≈ 7.766 WHX)
+  const realMarketLbPairPubkey = new PublicKey("6nDd6Y4SEpURbzArtg3GffL2Ltw16FD2SMKfyUnX7SXf");
 
   before(async () => {
     const signers = [admin, attacker, user1, user2];
@@ -86,16 +59,13 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
 
     await mintTo(provider.connection, admin, whxMint, whxVault, admin, 1_000_000_000_000);
 
-    // Mock pool at active_id = -2049, bin_step = 10 (1 USDT ≈ 7.766 WHX)
-    realMarketLbPairKeypair = await createMockLbPair(-2049, 10, admin);
-
     await program.methods
       .initialize()
       .accounts({
         admin: admin.publicKey,
         whxMint: whxMint,
         whxVault: whxVault,
-        lbPair: realMarketLbPairKeypair.publicKey,
+        lbPair: realMarketLbPairPubkey,
         globalConfig: globalConfigPda,
         systemProgram: SystemProgram.programId,
       })
@@ -196,7 +166,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
         globalConfig: globalConfigPda,
         userAllocation: user1AllocationPda,
         whxVault: whxVault,
-        lbPair: realMarketLbPairKeypair.publicKey,
+        lbPair: realMarketLbPairPubkey,
         userWhxAccount: user1WhxAccount,
         tokenProgram: TOKEN_PROGRAM_ID,
       })

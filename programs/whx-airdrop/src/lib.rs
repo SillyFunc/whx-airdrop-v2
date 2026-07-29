@@ -13,7 +13,7 @@ pub use state::*;
 
 declare_id!("Fbu5VVHh6UEBbtAZ2sNB1WzyacZeZXV6TTxsx2jMGZFq");
 
-/// WHX Airdrop Program (Refactored with Deep PriceMath Engine & User-Funded Allocation Lifecycle)
+/// WHX Airdrop Program (Pure Production Architecture)
 #[program]
 pub mod whx_airdrop {
     use super::*;
@@ -40,26 +40,17 @@ pub mod whx_airdrop {
 
     /// User initializes empty UserAllocation PDA paying own SOL rent.
     pub fn init_user_allocation(ctx: Context<InitUserAllocation>) -> Result<()> {
-        instructions::init_user_allocation::handle_init_user_allocation(ctx)
+        instructions::allocation::handle_init_user_allocation(ctx)
     }
 
     /// Authorize a user with a USDT allocation quota (Admin only, 0 rent required).
     pub fn authorize_user(ctx: Context<AuthorizeUser>, usdt_amount: u64) -> Result<()> {
-        instructions::authorize_user::handle_authorize_user(ctx, usdt_amount)
+        instructions::allocation::handle_authorize_user(ctx, usdt_amount)
     }
 
     /// Cancel/reject user allocation quota (Admin only, refunds 100% rent to user).
     pub fn cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Result<()> {
-        instructions::cancel_user_allocation::handle_cancel_user_allocation(ctx)
-    }
-
-    /// Set/mock Meteora DLMM LbPair state (active_id & bin_step).
-    pub fn set_lb_pair(
-        ctx: Context<SetLbPair>,
-        active_id: i32,
-        bin_step: u16,
-    ) -> Result<()> {
-        instructions::set_lb_pair::handle_set_lb_pair(ctx, active_id, bin_step)
+        instructions::allocation::handle_cancel_user_allocation(ctx)
     }
 
     /// User claims WHX airdrop tokens based on real-time Meteora DLMM LbPair price (refunds 100% rent to user).

@@ -286,4 +286,113 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
       expect(err.toString()).to.include("ExceedsTotalAirdropLimit");
     }
   });
+
+  it("Step 6: 越权攻击拦截测试 (非 Admin 攻击者尝试授权或修改配置失败)", async () => {
+    const targetUser = Keypair.generate();
+    const airdropTx = await provider.connection.requestAirdrop(targetUser.publicKey, 5 * LAMPORTS_PER_SOL);
+    const latestBlockhash = await provider.connection.getLatestBlockhash();
+    await provider.connection.confirmTransaction({ signature: airdropTx, ...latestBlockhash });
+
+    const [targetAllocationPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), targetUser.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // Target user initializes allocation PDA
+    await program.methods
+      .initUserAllocation()
+      .accountsPartial({
+        user: targetUser.publicKey,
+        userAllocation: targetAllocationPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([targetUser])
+      .rpc();
+
+    try {
+      await program.methods
+        .authorizeUser(new anchor.BN(1_000_000))
+        .accountsPartial({
+          admin: attacker.publicKey,
+          user: targetUser.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: targetAllocationPda,
+        })
+        .signers([attacker])
+        .rpc();
+
+      expect.fail("Attacker authorizeUser should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("Unauthorized");
+    }
+  });
+
+  it("Step 7: 伪造金库/池子账户攻击拦截测试 (传入错误 whxVault 校验失败)", async () => {
+    const fakeVault = await createAccount(
+      provider.connection,
+      attacker,
+      whxMint,
+      attacker.publicKey,
+      Keypair.generate()
+    );
+
+    const testUserKey = Keypair.generate();
+    const airdropTx = await provider.connection.requestAirdrop(testUserKey.publicKey, 5 * LAMPORTS_PER_SOL);
+    const latestBlockhash = await provider.connection.getLatestBlockhash();
+    await provider.connection.confirmTransaction({ signature: airdropTx, ...latestBlockhash });
+
+    const [testAllocPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), testUserKey.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .initUserAllocation()
+      .accountsPartial({
+        user: testUserKey.publicKey,
+        userAllocation: testAllocPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([testUserKey])
+      .rpc();
+
+    await program.methods
+      .authorizeUser(new anchor.BN(5_000_000))
+      .accountsPartial({
+        admin: admin.publicKey,
+        user: testUserKey.publicKey,
+        globalConfig: globalConfigPda,
+        userAllocation: testAllocPda,
+      })
+      .signers([admin])
+      .rpc();
+
+    const userWhxAccount = await createAccount(
+      provider.connection,
+      testUserKey,
+      whxMint,
+      testUserKey.publicKey,
+      Keypair.generate()
+    );
+
+    try {
+      await program.methods
+        .claim()
+        .accountsPartial({
+          user: testUserKey.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: testAllocPda,
+          whxVault: fakeVault,
+          lbPair: realMarketLbPairPubkey,
+          userWhxAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([testUserKey])
+        .rpc();
+
+      expect.fail("Claim with fake whxVault should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("InvalidPoolAccount");
+    }
+  });
 });

@@ -29,8 +29,7 @@ pub struct InitUserAllocation<'info> {
 
 pub fn handle_init_user_allocation(ctx: Context<InitUserAllocation>) -> Result<()> {
     let user_allocation = &mut ctx.accounts.user_allocation;
-    user_allocation.usdt_amount = 0;
-    user_allocation.bump = ctx.bumps.user_allocation;
+    user_allocation.initialize(ctx.bumps.user_allocation);
 
     msg!(
         "UserAllocation PDA initialized by user {} (rent paid by user)",
@@ -67,7 +66,7 @@ pub struct AuthorizeUser<'info> {
 
 pub fn handle_authorize_user(ctx: Context<AuthorizeUser>, usdt_amount: u64) -> Result<()> {
     let user_allocation = &mut ctx.accounts.user_allocation;
-    user_allocation.usdt_amount = usdt_amount;
+    user_allocation.set_quota(usdt_amount);
 
     msg!(
         "User {} authorized by admin with USDT allocation {}",

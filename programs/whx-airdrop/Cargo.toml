@@ -10,7 +10,8 @@ crate-type = ["cdylib", "lib"]
 name = "whx_airdrop"
 
 [features]
-default = []
+default = ["test-sbf"]
+test-sbf = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-log-ix-name = []

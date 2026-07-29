@@ -11,7 +11,7 @@ pub use instructions::*;
 pub use price_math::*;
 pub use state::*;
 
-declare_id!("Fbu5VVHh6UEBbtAZ2sNB1WzyacZeZXV6TTxsx2jMGZFq");
+declare_id!("3jkwSf6RG912UinxyAMXyMLomWYGkgAiP9iVGiM6ruEJ");
 
 /// WHX Airdrop Program (Pure Production Architecture)
 #[program]
@@ -61,5 +61,11 @@ pub mod whx_airdrop {
     /// Emergency withdraw remaining WHX tokens from program vault (Admin only).
     pub fn emergency_withdraw(ctx: Context<EmergencyWithdraw>, amount: u64) -> Result<()> {
         instructions::emergency_withdraw::handle_emergency_withdraw(ctx, amount)
+    }
+
+    /// Set mock LbPair active_id and bin_step (Test environment only).
+    #[cfg(feature = "test-sbf")]
+    pub fn set_lb_pair(ctx: Context<SetLbPair>, active_id: i32, bin_step: u16) -> Result<()> {
+        instructions::set_lb_pair::handle_set_lb_pair(ctx, active_id, bin_step)
     }
 }

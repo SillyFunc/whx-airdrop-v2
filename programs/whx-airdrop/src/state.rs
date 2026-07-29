@@ -25,3 +25,16 @@ pub struct UserAllocation {
     /// PDA bump seed
     pub bump: u8,
 }
+
+impl UserAllocation {
+    /// Deep domain method: Initialize zero-quota allocation with bump
+    pub fn initialize(&mut self, bump: u8) {
+        self.usdt_amount = 0;
+        self.bump = bump;
+    }
+
+    /// Deep domain method: Authorize or update USDT allocation quota approved by admin
+    pub fn set_quota(&mut self, usdt_amount: u64) {
+        self.usdt_amount = usdt_amount;
+    }
+}

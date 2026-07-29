@@ -7,10 +7,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-whx_airdrop = "Fbu5VVHh6UEBbtAZ2sNB1WzyacZeZXV6TTxsx2jMGZFq"
+whx_airdrop = "3jkwSf6RG912UinxyAMXyMLomWYGkgAiP9iVGiM6ruEJ"
 
 [programs.devnet]
-whx_airdrop = "Fbu5VVHh6UEBbtAZ2sNB1WzyacZeZXV6TTxsx2jMGZFq"
+whx_airdrop = "3jkwSf6RG912UinxyAMXyMLomWYGkgAiP9iVGiM6ruEJ"
 
 [provider]
 cluster = "localnet"

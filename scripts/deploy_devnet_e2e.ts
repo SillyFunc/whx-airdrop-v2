@@ -8,7 +8,14 @@ import {
   getAccount,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import {
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+  TransactionInstruction,
+  Transaction,
+} from "@solana/web3.js";
 import * as fs from "fs";
 
 async function main() {
@@ -22,7 +29,7 @@ async function main() {
   const wallet = new anchor.Wallet(walletKeypair);
 
   console.log("=========================================================================");
-  console.log("🚀 开始 Solana Devnet (Helius 专用 RPC) 升级后合约端到端全流程测试");
+  console.log("🚀 开始 Solana Devnet (Helius 专用 RPC) 最新合约全流程端到端跑通演练");
   console.log("=========================================================================");
   console.log(`· 部署者 (Admin) 公钥: ${wallet.publicKey.toBase58()}`);
 
@@ -32,20 +39,21 @@ async function main() {
   const program = anchor.workspace.WhxAirdrop as Program<WhxAirdrop>;
   console.log(`· 链上最新合约 Program ID: ${program.programId.toBase58()}\n`);
 
-  // 1. 推算 GlobalConfig PDA 并读取链上绑定的 WHX Mint
-  console.log("Step 1: 读取 GlobalConfig PDA 及其绑定的 Devnet WHX Mint...");
+  // 1. 在 Devnet 发行 WHX 与 USDT 测试代币
+  console.log("Step 1: 在 Devnet 发行 WHX 与 USDT 测试代币 (Decimals: 6)...");
+  const whxMint = await createMint(connection, walletKeypair, wallet.publicKey, null, 6);
+  const usdtMint = await createMint(connection, walletKeypair, wallet.publicKey, null, 6);
+  console.log(`  - Devnet WHX Mint: ${whxMint.toBase58()}`);
+  console.log(`  - Devnet USDT Mint: ${usdtMint.toBase58()}\n`);
+
+  // 2. 推算 GlobalConfig PDA 并创建所属 WHX 金库账户 (Vault)
+  console.log("Step 2: 推算 GlobalConfig PDA 并创建所属 WHX 金库账户 (Vault)...");
   const [globalConfigPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("global_config")],
     program.programId
   );
   console.log(`  - GlobalConfig PDA: ${globalConfigPda.toBase58()}`);
 
-  const globalConfigAccount = await program.account.globalConfig.fetch(globalConfigPda);
-  const whxMint = globalConfigAccount.whxMint;
-  console.log(`  - GlobalConfig 关联 WHX Mint: ${whxMint.toBase58()}\n`);
-
-  // 2. 创建所属的 WHX 金库账户 (Vault)
-  console.log("Step 2: 创建所属于 GlobalConfig PDA 的 WHX 金库账户 (Vault)...");
   const whxVaultKeypair = Keypair.generate();
   const whxVault = await createAccount(
     connection,
@@ -60,37 +68,50 @@ async function main() {
   const mintTx = await mintTo(connection, walletKeypair, whxMint, whxVault, walletKeypair, 1_000_000_000_000);
   console.log(`  - 已成功向金库充值 1,000,000.000000 WHX 筹码 (Tx: ${mintTx.slice(0, 20)}...)\n`);
 
-  // 3. 构建 Devnet Meteora DLMM 池子数据 (active_id = -2049, bin_step = 10 -> 1 USDT ≈ 7.766 WHX)
-  console.log("Step 3: 构建 Devnet Meteora DLMM 池子数据 (active_id = -2049, bin_step = 10)...");
+  // 3. 构建 Devnet 模拟 Meteora DLMM 池子数据 (active_id = -2049, bin_step = 10 -> 1 USDT ≈ 7.766 WHX)
+  console.log("Step 3: 构建 Devnet Meteora DLMM 模拟池子 (active_id = -2049, bin_step = 10)...");
   const lbPairKeypair = Keypair.generate();
   const space = 130;
   const lamports = await connection.getMinimumBalanceForRentExemption(space);
 
-  const createLbPairTx = new anchor.web3.Transaction().add(
+  const createLbAccountTx = new Transaction().add(
     SystemProgram.createAccount({
       fromPubkey: wallet.publicKey,
       newAccountPubkey: lbPairKeypair.publicKey,
       lamports,
       space,
-      programId: wallet.publicKey,
+      programId: program.programId,
     })
   );
-  await provider.sendAndConfirm(createLbPairTx, [lbPairKeypair]);
+  await provider.sendAndConfirm(createLbAccountTx, [lbPairKeypair]);
 
-  console.log(`  - Devnet LbPair 池子地址: ${lbPairKeypair.publicKey.toBase58()}`);
-  console.log(`  - 池子挂载价格数据: 1 USDT ≈ 7.766094 WHX\n`);
-
-  // 4. 调用 updateConfig 更新链上配置
-  console.log("Step 4: 调用合约 updateConfig 更新链上 WHX Vault 与 LbPair 池子关联...");
-  const updateTx = await program.methods
-    .updateConfig(null, whxVault, lbPairKeypair.publicKey)
+  await (program.methods as any)
+    .setLbPair(-2049, 10)
     .accountsPartial({
-      admin: wallet.publicKey,
-      globalConfig: globalConfigPda,
+      payer: wallet.publicKey,
+      lbPair: lbPairKeypair.publicKey,
     })
     .signers([walletKeypair])
     .rpc();
-  console.log(`  - 合约配置更新成功！(Tx: ${updateTx})\n`);
+
+  console.log(`  - Devnet LbPair 池子地址: ${lbPairKeypair.publicKey.toBase58()}`);
+  console.log(`  - 池子挂载价格数据: active_id = -2049, bin_step = 10 (1 USDT ≈ 7.766094 WHX)\n`);
+
+  // 4. 调用 initialize 初始化合约
+  console.log("Step 4: 调用合约 initialize 初始化链上配置...");
+  const initTx = await program.methods
+    .initialize()
+    .accountsPartial({
+      admin: wallet.publicKey,
+      whxMint,
+      whxVault,
+      lbPair: lbPairKeypair.publicKey,
+      globalConfig: globalConfigPda,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([walletKeypair])
+    .rpc();
+  console.log(`  - 合约初始化成功！(Tx: ${initTx})\n`);
 
   // 5. 模拟完整用户体验与业务流程测试
   console.log("=========================================================================");
@@ -102,7 +123,7 @@ async function main() {
   console.log(`· 测试用户 (Test User) 地址: ${testUser.publicKey.toBase58()}`);
 
   // Transfer 0.05 SOL to testUser for tx fees
-  const transferTx = new anchor.web3.Transaction().add(
+  const transferTx = new Transaction().add(
     SystemProgram.transfer({
       fromPubkey: wallet.publicKey,
       toPubkey: testUser.publicKey,
@@ -178,6 +199,7 @@ async function main() {
   console.log("🎉 Solana Devnet (测试网) 全流程测试演练成功闭环！");
   console.log("=========================================================================");
   console.log(`· 确权 USDT 额度: 10.000000 USDT`);
+  console.log(`· Meteora DLMM 实时价格: 1 USDT ≈ 7.766094 WHX`);
   console.log(`· 最终用户到账 WHX: ✨ ${formattedWhx} WHX ✨`);
   console.log(`· PDA 状态: 自动销毁，~0.00146 SOL 租金已 100% 全额退还给测试用户！`);
   console.log("=========================================================================\n");

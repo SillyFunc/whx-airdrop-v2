@@ -52,12 +52,13 @@ pub struct Claim<'info> {
 pub fn handle_claim(ctx: Context<Claim>) -> Result<()> {
     let global_config = &ctx.accounts.global_config;
 
-    // 1. Delegate math calculation & byte decoding to deep PriceMath module
+    // 1. Delegate math calculation & byte decoding through MeteoraDlmmAdapter and deep PriceMath module
     let lb_pair_account = &ctx.accounts.lb_pair;
     let data = lb_pair_account.try_borrow_data()?;
     let usdt_amount_raw = ctx.accounts.user_allocation.usdt_amount;
 
-    let output = PriceMath::compute_claim_output(&data, usdt_amount_raw)?;
+    let oracle_params = crate::price_math::MeteoraDlmmAdapter::parse(&data)?;
+    let output = PriceMath::compute_claim_output(oracle_params, usdt_amount_raw)?;
 
     require!(
         ctx.accounts.whx_vault.amount >= output.whx_amount,

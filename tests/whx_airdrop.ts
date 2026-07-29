@@ -61,7 +61,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
 
     await program.methods
       .initialize()
-      .accounts({
+      .accountsPartial({
         admin: admin.publicKey,
         whxMint: whxMint,
         whxVault: whxVault,
@@ -83,7 +83,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
 
     await program.methods
       .initUserAllocation()
-      .accounts({
+      .accountsPartial({
         user: user1.publicKey,
         userAllocation: user1AllocationPda,
         systemProgram: SystemProgram.programId,
@@ -116,7 +116,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
 
     await program.methods
       .authorizeUser(new anchor.BN(10_000_000))
-      .accounts({
+      .accountsPartial({
         admin: admin.publicKey,
         user: user1.publicKey,
         globalConfig: globalConfigPda,
@@ -161,7 +161,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
 
     await program.methods
       .claim()
-      .accounts({
+      .accountsPartial({
         user: user1.publicKey,
         globalConfig: globalConfigPda,
         userAllocation: user1AllocationPda,
@@ -203,7 +203,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     // User2 initializes PDA
     await program.methods
       .initUserAllocation()
-      .accounts({
+      .accountsPartial({
         user: user2.publicKey,
         userAllocation: user2AllocationPda,
         systemProgram: SystemProgram.programId,
@@ -216,7 +216,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     // Admin rejects / cancels User2's allocation
     await program.methods
       .cancelUserAllocation()
-      .accounts({
+      .accountsPartial({
         admin: admin.publicKey,
         user: user2.publicKey,
         globalConfig: globalConfigPda,
@@ -237,5 +237,53 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     console.log("· 管理员驳回申请，调 cancelUserAllocation 销毁 PDA");
     console.log("· 租金退还结果: User2 垫付的 ~0.00146 SOL 租金已 100% 全额退还给 User2 钱包");
     console.log("=======================================================\n");
+  });
+
+  it("Step 5: 33,000 USDT 链上死门硬熔断拦截测试 (超过 33,000 USDT 授权报错被拒)", async () => {
+    const overflowUser = Keypair.generate();
+    const airdropTx = await provider.connection.requestAirdrop(overflowUser.publicKey, 10 * LAMPORTS_PER_SOL);
+    const latestBlockhash = await provider.connection.getLatestBlockhash();
+    await provider.connection.confirmTransaction({ signature: airdropTx, ...latestBlockhash });
+
+    const [overflowAllocationPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), overflowUser.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // Initialize allocation for overflowUser
+    await program.methods
+      .initUserAllocation()
+      .accountsPartial({
+        user: overflowUser.publicKey,
+        userAllocation: overflowAllocationPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([overflowUser])
+      .rpc();
+
+    // Attempt to authorize 33,000.000001 USDT (exceeding 33,000 USDT cap)
+    try {
+      await program.methods
+        .authorizeUser(new anchor.BN(33_000_000_001))
+        .accountsPartial({
+          admin: admin.publicKey,
+          user: overflowUser.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: overflowAllocationPda,
+        })
+        .signers([admin])
+        .rpc();
+
+      expect.fail("Should have failed with ExceedsTotalAirdropLimit error");
+    } catch (err: any) {
+      console.log("=======================================================");
+      console.log("🛡️ 步骤 5/5: 33,000 USDT 链上死门硬熔断拦截成功！");
+      console.log("-------------------------------------------------------");
+      console.log(`· 尝试授权超额 USDT: 33,000.000001 USDT (Raw: 33000000001)`);
+      console.log(`· 链上死门拦截捕获错误: ExceedsTotalAirdropLimit (33,000 U 封顶)`);
+      console.log("=======================================================\n");
+
+      expect(err.toString()).to.include("ExceedsTotalAirdropLimit");
+    }
   });
 });

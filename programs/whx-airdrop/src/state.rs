@@ -12,6 +12,10 @@ pub struct GlobalConfig {
     pub whx_vault: Pubkey,
     /// Meteora DLMM LbPair account address
     pub lb_pair: Pubkey,
+    /// Hard-coded maximum total USDT airdrop budget (33,000 USDT = 33_000_000_000 raw units)
+    pub max_total_usdt: u64,
+    /// Current cumulative authorized USDT quota allocated across all users
+    pub total_authorized_usdt: u64,
     /// PDA bump seed
     pub bump: u8,
 }

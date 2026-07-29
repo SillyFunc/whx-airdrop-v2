@@ -36,8 +36,13 @@ pub fn handle_initialize(ctx: Context<Initialize>) -> Result<()> {
     global_config.whx_mint = ctx.accounts.whx_mint.key();
     global_config.whx_vault = ctx.accounts.whx_vault.key();
     global_config.lb_pair = ctx.accounts.lb_pair.key();
+    global_config.max_total_usdt = 33_000_000_000; // 33,000 USDT (6 decimals)
+    global_config.total_authorized_usdt = 0;
     global_config.bump = ctx.bumps.global_config;
 
-    msg!("GlobalConfig initialized with Meteora LbPair: {}", global_config.lb_pair);
+    msg!(
+        "GlobalConfig initialized: Meteora LbPair = {}, Total Airdrop Cap = 33,000 USDT",
+        global_config.lb_pair
+    );
     Ok(())
 }

@@ -50,6 +50,7 @@ pub struct AuthorizeUser<'info> {
     pub user: UncheckedAccount<'info>,
 
     #[account(
+        mut,
         seeds = [GLOBAL_CONFIG_SEED],
         bump = global_config.bump,
         has_one = admin @ ErrorCode::Unauthorized
@@ -65,13 +66,37 @@ pub struct AuthorizeUser<'info> {
 }
 
 pub fn handle_authorize_user(ctx: Context<AuthorizeUser>, usdt_amount: u64) -> Result<()> {
-    let user_allocation = &mut ctx.accounts.user_allocation;
-    user_allocation.set_quota(usdt_amount);
+    let old_amount = ctx.accounts.user_allocation.usdt_amount;
+    let global_config = &mut ctx.accounts.global_config;
+
+    let new_total = if usdt_amount >= old_amount {
+        let diff = usdt_amount - old_amount;
+        global_config
+            .total_authorized_usdt
+            .checked_add(diff)
+            .ok_or(ErrorCode::MathOverflow)?
+    } else {
+        let diff = old_amount - usdt_amount;
+        global_config
+            .total_authorized_usdt
+            .checked_sub(diff)
+            .ok_or(ErrorCode::MathOverflow)?
+    };
+
+    require!(
+        new_total <= global_config.max_total_usdt,
+        ErrorCode::ExceedsTotalAirdropLimit
+    );
+
+    global_config.total_authorized_usdt = new_total;
+    ctx.accounts.user_allocation.set_quota(usdt_amount);
 
     msg!(
-        "User {} authorized by admin with USDT allocation {}",
+        "User {} authorized with USDT allocation {}. Total Authorized: {} / {}",
         ctx.accounts.user.key(),
-        usdt_amount
+        usdt_amount,
+        global_config.total_authorized_usdt,
+        global_config.max_total_usdt
     );
     Ok(())
 }
@@ -89,6 +114,7 @@ pub struct CancelUserAllocation<'info> {
     pub user: UncheckedAccount<'info>,
 
     #[account(
+        mut,
         seeds = [GLOBAL_CONFIG_SEED],
         bump = global_config.bump,
         has_one = admin @ ErrorCode::Unauthorized
@@ -105,9 +131,16 @@ pub struct CancelUserAllocation<'info> {
 }
 
 pub fn handle_cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Result<()> {
+    let refunded_usdt = ctx.accounts.user_allocation.usdt_amount;
+    let global_config = &mut ctx.accounts.global_config;
+    global_config.total_authorized_usdt = global_config
+        .total_authorized_usdt
+        .saturating_sub(refunded_usdt);
+
     msg!(
-        "Airdrop allocation for user {} cancelled by admin. Rent 100% refunded to user.",
-        ctx.accounts.user.key()
+        "Airdrop allocation for user {} cancelled by admin. Rent 100% refunded to user. Released {} USDT back to pool.",
+        ctx.accounts.user.key(),
+        refunded_usdt
     );
     Ok(())
 }

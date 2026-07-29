@@ -16,4 +16,7 @@ pub enum ErrorCode {
 
     #[msg("InsufficientVaultBalance: WHX vault balance is insufficient for claim")]
     InsufficientVaultBalance,
+
+    #[msg("ExceedsTotalAirdropLimit: Cumulative authorized allocation exceeds total 33,000 USDT budget limit")]
+    ExceedsTotalAirdropLimit,
 }

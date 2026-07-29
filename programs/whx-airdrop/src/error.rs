@@ -1,0 +1,19 @@
+use anchor_lang::prelude::*;
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Unauthorized: Caller is not the admin authority")]
+    Unauthorized,
+
+    #[msg("InvalidPoolAccount: Provided Meteora LbPair pool account does not match global config or is invalid")]
+    InvalidPoolAccount,
+
+    #[msg("MathOverflow: Arithmetic overflow occurred during calculation")]
+    MathOverflow,
+
+    #[msg("ZeroBalance: Pool balance is zero")]
+    ZeroBalance,
+
+    #[msg("InsufficientVaultBalance: WHX vault balance is insufficient for claim")]
+    InsufficientVaultBalance,
+}

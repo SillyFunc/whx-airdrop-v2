@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use crate::constants::PRICE_SCALE;
 use crate::error::ErrorCode;
 
+/// Calculated claim outcome containing price metadata and token payout amount
 pub struct ClaimOutput {
     pub active_id: i32,
     pub bin_step: u16,
@@ -9,18 +10,27 @@ pub struct ClaimOutput {
     pub whx_amount: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MeteoraDlmmParams {
-    pub active_id: i32,
-    pub bin_step: u16,
-}
+/// Deep Price & Airdrop Token Calculation Engine.
+/// Encapsulates binary account deserialization, exponential price math, and USDT-to-WHX conversion.
+pub struct PriceMath;
 
-/// Port / Adapter for Meteora DLMM Account Binary Deserialization
-pub struct MeteoraDlmmAdapter;
+impl PriceMath {
+    /// Deep interface entrypoint: Directly converts raw Meteora LbPair account bytes and USDT quota into WHX payout.
+    pub fn calculate_whx_airdrop(lb_pair_data: &[u8], usdt_amount_raw: u64) -> Result<ClaimOutput> {
+        let (active_id, bin_step) = Self::parse_oracle_params(lb_pair_data)?;
+        let price_scaled = Self::calculate_scaled_price(active_id, bin_step)?;
+        let whx_amount = Self::calculate_whx_amount(usdt_amount_raw, price_scaled)?;
 
-impl MeteoraDlmmAdapter {
-    /// Parse active_id (offset 112) and bin_step (offset 128) from raw Meteora LbPair account data
-    pub fn parse(data: &[u8]) -> Result<MeteoraDlmmParams> {
+        Ok(ClaimOutput {
+            active_id,
+            bin_step,
+            price_scaled,
+            whx_amount,
+        })
+    }
+
+    /// Internal helper: Parse active_id (offset 112..116) and bin_step (offset 128..130) from raw LbPair account data
+    fn parse_oracle_params(data: &[u8]) -> Result<(i32, u16)> {
         require!(data.len() >= 130, ErrorCode::InvalidPoolAccount);
 
         let active_id = i32::from_le_bytes(
@@ -35,14 +45,9 @@ impl MeteoraDlmmAdapter {
                 .map_err(|_| ErrorCode::InvalidPoolAccount)?,
         );
 
-        Ok(MeteoraDlmmParams { active_id, bin_step })
+        Ok((active_id, bin_step))
     }
-}
 
-/// Pure Price & Airdrop Token Calculation Engine
-pub struct PriceMath;
-
-impl PriceMath {
     /// Calculate 10^9 scaled price: Price = (1 + bin_step / 10000) ^ active_id
     pub fn calculate_scaled_price(active_id: i32, bin_step: u16) -> Result<u64> {
         let bin_step_f64 = bin_step as f64 / 10000.0;
@@ -70,39 +75,28 @@ impl PriceMath {
 
         u64::try_from(whx_amount_128).map_err(|_| ErrorCode::MathOverflow.into())
     }
-
-    /// Unified compute entrypoint from Oracle parameters
-    pub fn compute_claim_output(params: MeteoraDlmmParams, usdt_amount_raw: u64) -> Result<ClaimOutput> {
-        let price_scaled = Self::calculate_scaled_price(params.active_id, params.bin_step)?;
-        let whx_amount = Self::calculate_whx_amount(usdt_amount_raw, price_scaled)?;
-
-        Ok(ClaimOutput {
-            active_id: params.active_id,
-            bin_step: params.bin_step,
-            price_scaled,
-            whx_amount,
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_meteora_adapter_parsing() {
+    fn create_mock_lb_pair_data(active_id: i32, bin_step: u16) -> Vec<u8> {
         let mut mock_data = vec![0u8; 130];
-        // Set active_id = -2049 (i32: 0xfffff7ff) @ offset 112..116
-        let active_id_bytes = (-2049i32).to_le_bytes();
-        mock_data[112..116].copy_from_slice(&active_id_bytes);
+        mock_data[112..116].copy_from_slice(&active_id.to_le_bytes());
+        mock_data[128..130].copy_from_slice(&bin_step.to_le_bytes());
+        mock_data
+    }
 
-        // Set bin_step = 10 (u16: 0x000a) @ offset 128..130
-        let bin_step_bytes = (10u16).to_le_bytes();
-        mock_data[128..130].copy_from_slice(&bin_step_bytes);
+    #[test]
+    fn test_deep_price_math_execution() {
+        // active_id = -2049, bin_step = 10 -> Price ≈ 0.128765 USDT (1 USDT ≈ 7.766 WHX)
+        let mock_data = create_mock_lb_pair_data(-2049, 10);
+        let output = PriceMath::calculate_whx_airdrop(&mock_data, 10_000_000).unwrap();
 
-        let params = MeteoraDlmmAdapter::parse(&mock_data).unwrap();
-        assert_eq!(params.active_id, -2049);
-        assert_eq!(params.bin_step, 10);
+        assert_eq!(output.active_id, -2049);
+        assert_eq!(output.bin_step, 10);
+        assert_eq!(output.whx_amount, 77_521_962); // ~77.52 WHX for 10 USDT
     }
 
     #[test]
@@ -116,10 +110,9 @@ mod tests {
     }
 
     #[test]
-    fn test_price_math_real_market() {
-        // active_id = -2049, bin_step = 10 -> Price ≈ 0.128765 USDT (1 USDT ≈ 7.766 WHX)
-        let price_scaled = PriceMath::calculate_scaled_price(-2049, 10).unwrap();
-        let whx_amount = PriceMath::calculate_whx_amount(10_000_000, price_scaled).unwrap();
-        assert_eq!(whx_amount, 77_521_962); // 77.521962 WHX
+    fn test_invalid_account_data_len() {
+        let invalid_data = vec![0u8; 100];
+        let result = PriceMath::calculate_whx_airdrop(&invalid_data, 10_000_000);
+        assert!(result.is_err());
     }
 }

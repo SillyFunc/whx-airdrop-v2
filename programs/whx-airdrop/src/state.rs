@@ -34,6 +34,24 @@ pub struct UserAllocation {
     pub claimed_amount: u64,
 }
 
+impl GlobalConfig {
+    /// Deep domain method: Verify 33,000 USDT total cap and record claimed USDT budget
+    pub fn try_record_claim(&mut self, usdt_amount: u64) -> Result<()> {
+        let new_total = self
+            .total_authorized_usdt
+            .checked_add(usdt_amount)
+            .ok_or(crate::error::ErrorCode::MathOverflow)?;
+
+        require!(
+            new_total <= self.max_total_usdt,
+            crate::error::ErrorCode::ExceedsTotalAirdropLimit
+        );
+
+        self.total_authorized_usdt = new_total;
+        Ok(())
+    }
+}
+
 impl UserAllocation {
     /// Deep domain method: Initialize zero-quota allocation with bump
     pub fn initialize(&mut self, bump: u8) {
@@ -48,8 +66,14 @@ impl UserAllocation {
         self.usdt_amount = usdt_amount;
     }
 
-    pub fn mark_claimed(&mut self, claimed_amount: u64) {
+    /// Deep domain method: Mark allocation as claimed with state invariant check
+    pub fn mark_claimed(&mut self, claimed_amount: u64) -> Result<()> {
+        require!(
+            !self.claimed,
+            crate::error::ErrorCode::AlreadyClaimed
+        );
         self.claimed = true;
         self.claimed_amount = claimed_amount;
+        Ok(())
     }
 }

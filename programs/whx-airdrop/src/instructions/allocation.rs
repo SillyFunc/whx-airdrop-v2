@@ -66,30 +66,20 @@ pub struct AuthorizeUser<'info> {
 }
 
 pub fn handle_authorize_user(ctx: Context<AuthorizeUser>, usdt_amount: u64) -> Result<()> {
-    let old_amount = ctx.accounts.user_allocation.usdt_amount;
-    let global_config = &mut ctx.accounts.global_config;
-
-    let new_total = if usdt_amount >= old_amount {
-        let diff = usdt_amount - old_amount;
-        global_config
-            .total_authorized_usdt
-            .checked_add(diff)
-            .ok_or(ErrorCode::MathOverflow)?
-    } else {
-        let diff = old_amount - usdt_amount;
-        global_config
-            .total_authorized_usdt
-            .checked_sub(diff)
-            .ok_or(ErrorCode::MathOverflow)?
-    };
-
     require!(
-        new_total <= global_config.max_total_usdt,
-        ErrorCode::ExceedsTotalAirdropLimit
+        !ctx.accounts.user_allocation.claimed,
+        ErrorCode::AlreadyClaimed
     );
 
-    global_config.total_authorized_usdt = new_total;
+    let global_config = &mut ctx.accounts.global_config;
+
     ctx.accounts.user_allocation.set_quota(usdt_amount);
+
+    emit!(crate::events::UserAuthorizedEvent {
+        user: ctx.accounts.user.key(),
+        usdt_amount,
+        total_authorized: global_config.total_authorized_usdt,
+    });
 
     msg!(
         "User {} authorized with USDT allocation {}. Total Authorized: {} / {}",
@@ -131,14 +121,20 @@ pub struct CancelUserAllocation<'info> {
 }
 
 pub fn handle_cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Result<()> {
+    require!(
+        !ctx.accounts.user_allocation.claimed,
+        ErrorCode::AlreadyClaimed
+    );
+
     let refunded_usdt = ctx.accounts.user_allocation.usdt_amount;
-    let global_config = &mut ctx.accounts.global_config;
-    global_config.total_authorized_usdt = global_config
-        .total_authorized_usdt
-        .saturating_sub(refunded_usdt);
+
+    emit!(crate::events::UserCancelledEvent {
+        user: ctx.accounts.user.key(),
+        refunded_usdt,
+    });
 
     msg!(
-        "Airdrop allocation for user {} cancelled by admin. Rent 100% refunded to user. Released {} USDT back to pool.",
+        "Airdrop allocation for user {} cancelled by admin. Rent 100% refunded to user. Allocation {} was not counted as confirmed.",
         ctx.accounts.user.key(),
         refunded_usdt
     );

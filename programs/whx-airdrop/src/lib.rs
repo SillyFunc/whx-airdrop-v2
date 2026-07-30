@@ -1,5 +1,6 @@
 pub mod constants;
 pub mod error;
+pub mod events;
 pub mod instructions;
 pub mod price_math;
 pub mod state;
@@ -7,6 +8,7 @@ pub mod state;
 use anchor_lang::prelude::*;
 
 pub use constants::*;
+pub use events::*;
 pub use instructions::*;
 pub use price_math::*;
 pub use state::*;
@@ -56,11 +58,6 @@ pub mod whx_airdrop {
     /// User claims WHX airdrop tokens based on real-time Meteora DLMM LbPair price (refunds 100% rent to user).
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
         instructions::claim::handle_claim(ctx)
-    }
-
-    /// Emergency withdraw remaining WHX tokens from program vault (Admin only).
-    pub fn emergency_withdraw(ctx: Context<EmergencyWithdraw>, amount: u64) -> Result<()> {
-        instructions::emergency_withdraw::handle_emergency_withdraw(ctx, amount)
     }
 
     /// Set mock LbPair active_id and bin_step (Test environment only).

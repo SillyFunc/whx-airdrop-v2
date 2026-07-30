@@ -14,6 +14,7 @@ pub struct Claim<'info> {
     pub user: Signer<'info>,
 
     #[account(
+        mut,
         seeds = [GLOBAL_CONFIG_SEED],
         bump = global_config.bump,
     )]
@@ -22,8 +23,7 @@ pub struct Claim<'info> {
     #[account(
         mut,
         seeds = [USER_ALLOCATION_SEED, user.key().as_ref()],
-        bump = user_allocation.bump,
-        close = user
+        bump = user_allocation.bump
     )]
     pub user_allocation: Account<'info, UserAllocation>,
 
@@ -50,7 +50,13 @@ pub struct Claim<'info> {
 }
 
 pub fn handle_claim(ctx: Context<Claim>) -> Result<()> {
-    let global_config = &ctx.accounts.global_config;
+    require!(
+        !ctx.accounts.user_allocation.claimed,
+        ErrorCode::AlreadyClaimed
+    );
+
+    let global_config_account = ctx.accounts.global_config.to_account_info();
+    let global_config = &mut ctx.accounts.global_config;
 
     // 1. Delegate math calculation & byte decoding through MeteoraDlmmAdapter and deep PriceMath module
     let lb_pair_account = &ctx.accounts.lb_pair;
@@ -61,33 +67,52 @@ pub fn handle_claim(ctx: Context<Claim>) -> Result<()> {
     let output = PriceMath::compute_claim_output(oracle_params, usdt_amount_raw)?;
 
     require!(
+        global_config
+            .total_authorized_usdt
+            .checked_add(usdt_amount_raw)
+            .ok_or(ErrorCode::MathOverflow)?
+            <= global_config.max_total_usdt,
+        ErrorCode::ExceedsTotalAirdropLimit
+    );
+
+    require!(
         ctx.accounts.whx_vault.amount >= output.whx_amount,
         ErrorCode::InsufficientVaultBalance
     );
 
     // 2. CPI Transfer WHX to user token account
     let bump = global_config.bump;
-    let seeds = &[
-        GLOBAL_CONFIG_SEED,
-        &[bump],
-    ];
+    let seeds = &[GLOBAL_CONFIG_SEED, &[bump]];
     let signer_seeds = &[&seeds[..]];
 
     let cpi_accounts = Transfer {
         from: ctx.accounts.whx_vault.to_account_info(),
         to: ctx.accounts.user_whx_account.to_account_info(),
-        authority: ctx.accounts.global_config.to_account_info(),
+        authority: global_config_account,
     };
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.key(),
-        cpi_accounts,
-        signer_seeds,
-    );
+    let cpi_ctx =
+        CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
 
     token::transfer(cpi_ctx, output.whx_amount)?;
 
+    global_config.total_authorized_usdt = global_config
+        .total_authorized_usdt
+        .checked_add(usdt_amount_raw)
+        .ok_or(ErrorCode::MathOverflow)?;
+    require!(
+        global_config.total_authorized_usdt <= global_config.max_total_usdt,
+        ErrorCode::ExceedsTotalAirdropLimit
+    );
+    ctx.accounts.user_allocation.mark_claimed(output.whx_amount);
+
+    emit!(crate::events::UserClaimedEvent {
+        user: ctx.accounts.user.key(),
+        usdt_amount: usdt_amount_raw,
+        whx_amount: output.whx_amount,
+    });
+
     msg!(
-        "Claim successful! Active ID: {}, Bin Step: {}, Price Scaled (10^9): {}, WHX Amount: {}. Rent 100% refunded to user.",
+        "Claim successful! Active ID: {}, Bin Step: {}, Price Scaled (10^9): {}, WHX Amount: {}. Allocation PDA retained as claimed receipt.",
         output.active_id,
         output.bin_step,
         output.price_scaled,

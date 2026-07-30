@@ -5,6 +5,9 @@ pub enum ErrorCode {
     #[msg("Unauthorized: Caller is not the admin authority")]
     Unauthorized,
 
+    #[msg("AlreadyClaimed: This user allocation has already been claimed")]
+    AlreadyClaimed,
+
     #[msg("InvalidPoolAccount: Provided Meteora LbPair pool account does not match global config or is invalid")]
     InvalidPoolAccount,
 

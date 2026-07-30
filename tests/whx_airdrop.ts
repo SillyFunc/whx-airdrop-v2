@@ -130,6 +130,10 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
 
     const accountData = await program.account.userAllocation.fetch(user1AllocationPda);
     expect(accountData.usdtAmount.toNumber()).to.equal(10_000_000);
+    expect(accountData.claimed).to.equal(false);
+
+    const globalData = await program.account.globalConfig.fetch(globalConfigPda);
+    expect(globalData.totalAuthorizedUsdt.toNumber()).to.equal(0);
 
     console.log("=======================================================");
     console.log("🔑 步骤 2/4: 管理员 (Admin) 确权写入 10 USDT 额度");
@@ -143,7 +147,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     expect(adminCost).to.be.lessThan(0.0001);
   });
 
-  it("Step 3: User1 领空投 WHX (算价到账，销毁 PDA，~0.00146 SOL 租金 100% 退还 User1)", async () => {
+  it("Step 3: User1 领空投 WHX (算价到账，保留 PDA 领取凭证)", async () => {
     const [user1AllocationPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("user_allocation"), user1.publicKey.toBuffer()],
       program.programId
@@ -176,19 +180,42 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     const user1BalanceAfter = await provider.connection.getBalance(user1.publicKey);
     expect(user1BalanceAfter).to.be.greaterThan(user1BalanceBefore - 0.0001 * LAMPORTS_PER_SOL);
 
-    const closedPdaInfo = await provider.connection.getAccountInfo(user1AllocationPda);
-    expect(closedPdaInfo).to.be.null;
+    const allocationData = await program.account.userAllocation.fetch(user1AllocationPda);
+    expect(allocationData.claimed).to.equal(true);
+    expect(allocationData.claimedAmount.toNumber()).to.be.greaterThan(0);
+
+    const globalData = await program.account.globalConfig.fetch(globalConfigPda);
+    expect(globalData.totalAuthorizedUsdt.toNumber()).to.equal(10_000_000);
+
+    try {
+      await program.methods
+        .claim()
+        .accountsPartial({
+          user: user1.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: user1AllocationPda,
+          whxVault,
+          lbPair: realMarketLbPairPubkey,
+          userWhxAccount: user1WhxAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([user1])
+        .rpc();
+      expect.fail("A claimed allocation must not be claimable again");
+    } catch (err: any) {
+      expect(err.toString()).to.include("AlreadyClaimed");
+    }
 
     const user1WhxBalance = await getAccount(provider.connection, user1WhxAccount);
     const rawWhx = Number(user1WhxBalance.amount);
     const formattedWhx = (rawWhx / 1_000_000).toFixed(6);
 
     console.log("=======================================================");
-    console.log("✨ 步骤 3/4: 用户 (User1) 成功领取 WHX 空投 (含 100% 租金退还)");
+    console.log("✨ 步骤 3/4: 用户 (User1) 成功领取 WHX 空投 (PDA 保留领取状态)");
     console.log("-------------------------------------------------------");
     console.log(`· Meteora DLMM 实时算价: 到账 WHX 数量为 ${formattedWhx} WHX (Raw: ${rawWhx})`);
-    console.log("· PDA 销毁结算: close = user1 自动执行");
-    console.log("· 租金退还结果: 步骤1中垫付的 ~0.00146 SOL 租金已 100% 全额退还给 User1 钱包");
+    console.log("· PDA 领取状态: claimed = true，记录领取金额");
+    console.log("· 租金状态: PDA 保留，因此不会在 claim 时退还租金");
     console.log("=======================================================\n");
 
     expect(rawWhx).to.be.closeTo(77_521_962, 1_000_000);
@@ -239,7 +266,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     console.log("=======================================================\n");
   });
 
-  it("Step 5: 33,000 USDT 链上死门硬熔断拦截测试 (超过 33,000 USDT 授权报错被拒)", async () => {
+  it("Step 5: 33,000 USDT 链上死门硬熔断拦截测试 (超额领取被拒)", async () => {
     const overflowUser = Keypair.generate();
     const airdropTx = await provider.connection.requestAirdrop(overflowUser.publicKey, 10 * LAMPORTS_PER_SOL);
     const latestBlockhash = await provider.connection.getLatestBlockhash();
@@ -261,17 +288,39 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
       .signers([overflowUser])
       .rpc();
 
-    // Attempt to authorize 33,000.000001 USDT (exceeding 33,000 USDT cap)
+    // Authorization records the pending quota; the cap is enforced when claiming.
+    await program.methods
+      .authorizeUser(new anchor.BN(33_000_000_001))
+      .accountsPartial({
+        admin: admin.publicKey,
+        user: overflowUser.publicKey,
+        globalConfig: globalConfigPda,
+        userAllocation: overflowAllocationPda,
+      })
+      .signers([admin])
+      .rpc();
+
+    const overflowWhxAccount = await createAccount(
+      provider.connection,
+      overflowUser,
+      whxMint,
+      overflowUser.publicKey,
+      Keypair.generate()
+    );
+
     try {
       await program.methods
-        .authorizeUser(new anchor.BN(33_000_000_001))
+        .claim()
         .accountsPartial({
-          admin: admin.publicKey,
           user: overflowUser.publicKey,
           globalConfig: globalConfigPda,
           userAllocation: overflowAllocationPda,
+          whxVault,
+          lbPair: realMarketLbPairPubkey,
+          userWhxAccount: overflowWhxAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .signers([admin])
+        .signers([overflowUser])
         .rpc();
 
       expect.fail("Should have failed with ExceedsTotalAirdropLimit error");

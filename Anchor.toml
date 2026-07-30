@@ -12,6 +12,9 @@ whx_airdrop = "3jkwSf6RG912UinxyAMXyMLomWYGkgAiP9iVGiM6ruEJ"
 [programs.devnet]
 whx_airdrop = "3jkwSf6RG912UinxyAMXyMLomWYGkgAiP9iVGiM6ruEJ"
 
+[programs.mainnet]
+whx_airdrop = "3jkwSf6RG912UinxyAMXyMLomWYGkgAiP9iVGiM6ruEJ"
+
 [provider]
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"

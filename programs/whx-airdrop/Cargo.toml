@@ -10,7 +10,7 @@ crate-type = ["cdylib", "lib"]
 name = "whx_airdrop"
 
 [features]
-default = ["test-sbf"]
+default = []
 test-sbf = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []

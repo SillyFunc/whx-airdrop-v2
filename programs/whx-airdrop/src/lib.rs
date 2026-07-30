@@ -60,9 +60,4 @@ pub mod whx_airdrop {
         instructions::claim::handle_claim(ctx)
     }
 
-    /// Set mock LbPair active_id and bin_step (Test environment only).
-    #[cfg(feature = "test-sbf")]
-    pub fn set_lb_pair(ctx: Context<SetLbPair>, active_id: i32, bin_step: u16) -> Result<()> {
-        instructions::set_lb_pair::handle_set_lb_pair(ctx, active_id, bin_step)
-    }
 }

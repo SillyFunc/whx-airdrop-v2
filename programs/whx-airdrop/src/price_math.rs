@@ -21,8 +21,25 @@ impl PriceMath {
         
         let price_scaled = if bin_step > 0 && active_id != 0 {
             Self::calculate_scaled_price(active_id, bin_step)?
+        } else if lb_pair_data.len() >= 696 {
+            // Parse live Meteora CPMM Pool reserves dynamically from account data:
+            // Offset 680..688: WHX Reserve (res_whx)
+            // Offset 688..696: USDT Reserve (res_usdt)
+            let res_whx = u64::from_le_bytes(lb_pair_data[680..688].try_into().unwrap());
+            let res_usdt = u64::from_le_bytes(lb_pair_data[688..696].try_into().unwrap());
+
+            if res_whx > 0 && res_usdt > 0 {
+                // Live Price (USDT per WHX) scaled to 10^9: (res_usdt * 10^9) / res_whx
+                let p = (res_usdt as u128)
+                    .checked_mul(PRICE_SCALE)
+                    .ok_or(ErrorCode::MathOverflow)?
+                    .checked_div(res_whx as u128)
+                    .ok_or(ErrorCode::MathOverflow)?;
+                u64::try_from(p).map_err(|_| ErrorCode::MathOverflow)?
+            } else {
+                143_610_000
+            }
         } else {
-            // Live Mainnet WHX/USDT Market Price: 1 USDT = 6.963312 WHX (Price = 0.14361 USDT per WHX)
             143_610_000
         };
 

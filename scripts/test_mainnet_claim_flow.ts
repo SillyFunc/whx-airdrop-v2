@@ -141,44 +141,62 @@ async function main() {
     WHX_MINT_PUBKEY,
     testUserKeypair.publicKey
   );
-  const createAtaTx = await retryAction(async () => {
-    const createAtaIx = createAssociatedTokenAccountInstruction(
-      testUserKeypair.publicKey,
-      userWhxAta,
-      testUserKeypair.publicKey,
-      WHX_MINT_PUBKEY
-    );
-    const tx = new Transaction().add(createAtaIx);
-    const userProvider = new anchor.AnchorProvider(
-      connection,
-      new anchor.Wallet(testUserKeypair),
-      { commitment: "confirmed" }
-    );
-    return await userProvider.sendAndConfirm(tx, [testUserKeypair]);
-  });
-  console.log(`   ✨ 成功创建用户 WHX ATA 账户!`);
+  const ataInfo = await connection.getAccountInfo(userWhxAta);
+  let createAtaTx: string | null = null;
+
+  if (ataInfo) {
+    console.log(`   ℹ️ 用户 WHX ATA 已存在，跳过创建。`);
+  } else {
+    createAtaTx = await retryAction(async () => {
+      const createAtaIx = createAssociatedTokenAccountInstruction(
+        testUserKeypair.publicKey,
+        userWhxAta,
+        testUserKeypair.publicKey,
+        WHX_MINT_PUBKEY
+      );
+      const tx = new Transaction().add(createAtaIx);
+      const userProvider = new anchor.AnchorProvider(
+        connection,
+        new anchor.Wallet(testUserKeypair),
+        { commitment: "confirmed" }
+      );
+      return await userProvider.sendAndConfirm(tx, [testUserKeypair]);
+    });
+    console.log(`   ✨ 成功创建用户 WHX ATA 账户!`);
+  }
   console.log(`   └─ ATA 地址: ${userWhxAta.toBase58()}`);
-  console.log(`   └─ Solscan Tx: https://solscan.io/tx/${createAtaTx}`);
+  if (createAtaTx) {
+    console.log(`   └─ Solscan Tx: https://solscan.io/tx/${createAtaTx}`);
+  }
 
   // =============================================================================
   // 步骤 2/4: 创建 PDA (如果不存在)
   // =============================================================================
   console.log("\n-------------------------------------------------------------------------");
   console.log("📝 步骤 2/4: 创建用户 UserAllocation PDA (如果不存在)...");
-  const initAllocTx = await retryAction(async () => {
-    return await program.methods
-      .initUserAllocation()
-      .accountsPartial({
-        user: testUserKeypair.publicKey,
-        userAllocation: testUserAllocPda,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([testUserKeypair])
-      .rpc();
-  });
-  console.log(`   ✨ 成功创建 UserAllocation PDA!`);
+  const allocationInfo = await connection.getAccountInfo(testUserAllocPda);
+  let initAllocTx: string | null = null;
+
+  if (allocationInfo) {
+    console.log(`   ℹ️ UserAllocation PDA 已存在，跳过创建。`);
+  } else {
+    initAllocTx = await retryAction(async () => {
+      return await program.methods
+        .initUserAllocation()
+        .accountsPartial({
+          user: testUserKeypair.publicKey,
+          userAllocation: testUserAllocPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([testUserKeypair])
+        .rpc();
+    });
+    console.log(`   ✨ 成功创建 UserAllocation PDA!`);
+  }
   console.log(`   └─ PDA 地址: ${testUserAllocPda.toBase58()}`);
-  console.log(`   └─ Solscan Tx: https://solscan.io/tx/${initAllocTx}`);
+  if (initAllocTx) {
+    console.log(`   └─ Solscan Tx: https://solscan.io/tx/${initAllocTx}`);
+  }
 
   // =============================================================================
   // 步骤 3/4: 管理员授权确权 (authorizeUser)

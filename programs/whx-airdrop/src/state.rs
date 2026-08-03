@@ -61,9 +61,21 @@ impl UserAllocation {
         self.claimed_amount = 0;
     }
 
-    /// Deep domain method: Authorize or update USDT allocation quota approved by admin
-    pub fn set_quota(&mut self, usdt_amount: u64) {
+    /// Deep domain method: Set a user's USDT allocation quota.
+    /// Set-once semantics: a non-zero quota cannot be overwritten; to change a quota,
+    /// admin must cancel (closes PDA, refunds rent) and the user re-initializes.
+    pub fn set_quota(&mut self, usdt_amount: u64) -> Result<()> {
+        require!(
+            !self.claimed,
+            crate::error::ErrorCode::AlreadyClaimed
+        );
+        require!(usdt_amount > 0, crate::error::ErrorCode::ZeroQuota);
+        require!(
+            self.usdt_amount == 0,
+            crate::error::ErrorCode::QuotaAlreadySet
+        );
         self.usdt_amount = usdt_amount;
+        Ok(())
     }
 
     /// Deep domain method: Mark allocation as claimed with state invariant check

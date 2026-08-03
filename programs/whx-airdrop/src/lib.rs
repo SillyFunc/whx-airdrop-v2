@@ -50,6 +50,15 @@ pub mod whx_airdrop {
         instructions::allocation::handle_authorize_user(ctx, usdt_amount)
     }
 
+    /// Batch authorize up to 10 users with USDT allocation quotas in one transaction (Admin only).
+    pub fn batch_authorize_users(
+        ctx: Context<AuthorizeUsers>,
+        users: Vec<Pubkey>,
+        amounts: Vec<u64>,
+    ) -> Result<()> {
+        instructions::allocation::handle_batch_authorize_users(ctx, users, amounts)
+    }
+
     /// Cancel/reject user allocation quota (Admin only, refunds 100% rent to user).
     pub fn cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Result<()> {
         instructions::allocation::handle_cancel_user_allocation(ctx)
@@ -58,6 +67,11 @@ pub mod whx_airdrop {
     /// User claims WHX airdrop tokens based on real-time Meteora DLMM LbPair price (refunds 100% rent to user).
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
         instructions::claim::handle_claim(ctx)
+    }
+
+    /// Admin withdraws the full WHX vault balance to an arbitrary wallet token account.
+    pub fn withdraw_vault(ctx: Context<WithdrawVault>) -> Result<()> {
+        instructions::withdraw_vault::handle_withdraw_vault(ctx)
     }
 
 }

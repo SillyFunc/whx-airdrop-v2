@@ -22,4 +22,25 @@ pub enum ErrorCode {
 
     #[msg("ExceedsTotalAirdropLimit: Cumulative authorized allocation exceeds total 33,000 USDT budget limit")]
     ExceedsTotalAirdropLimit,
+
+    #[msg("ZeroQuota: USDT quota must be greater than zero")]
+    ZeroQuota,
+
+    #[msg("QuotaAlreadySet: User already has an authorized quota; cancel first to re-authorize")]
+    QuotaAlreadySet,
+
+    #[msg("BatchLengthMismatch: users and amounts vectors must have the same length")]
+    BatchLengthMismatch,
+
+    #[msg("BatchTooLarge: Batch size must be between 1 and 10 users")]
+    BatchTooLarge,
+
+    #[msg("UserAllocationNotFound: User allocation PDA missing or invalid in remaining accounts")]
+    UserAllocationNotFound,
+
+    #[msg("DuplicateUserInBatch: The same user appears more than once in the batch")]
+    DuplicateUserInBatch,
+
+    #[msg("InvalidRecipient: Recipient token account mint does not match WHX mint")]
+    InvalidRecipient,
 }

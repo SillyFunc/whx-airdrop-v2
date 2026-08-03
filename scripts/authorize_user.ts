@@ -124,6 +124,11 @@ async function main() {
     process.exit(1);
   }
 
+  if (currentAlloc.usdtAmount.toNumber() > 0) {
+    console.error(`\n⚠️ 警告: 该用户已有确权配额 ${Number(currentAlloc.usdtAmount) / 1e6} USDT (set-once 语义，不可覆盖)。`);
+    process.exit(1);
+  }
+
   // 5. 管理员发起 authorizeUser 链上确权
   console.log("\n-------------------------------------------------------------------------");
   console.log(`🚀 正向主网打包提交 authorizeUser 确权交易... (${usdtAmountNum} USDT)`);

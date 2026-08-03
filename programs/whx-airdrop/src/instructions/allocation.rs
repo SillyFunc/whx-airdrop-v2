@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
+use std::collections::HashSet;
 
 use crate::{
-    constants::{GLOBAL_CONFIG_SEED, USER_ALLOCATION_SEED},
+    constants::{GLOBAL_CONFIG_SEED, MAX_BATCH_USERS, USER_ALLOCATION_SEED},
     error::ErrorCode,
     state::{GlobalConfig, UserAllocation},
 };
@@ -66,14 +67,10 @@ pub struct AuthorizeUser<'info> {
 }
 
 pub fn handle_authorize_user(ctx: Context<AuthorizeUser>, usdt_amount: u64) -> Result<()> {
-    require!(
-        !ctx.accounts.user_allocation.claimed,
-        ErrorCode::AlreadyClaimed
-    );
+    // Set-once / zero-quota / claimed invariants enforced inside the domain method
+    ctx.accounts.user_allocation.set_quota(usdt_amount)?;
 
     let global_config = &mut ctx.accounts.global_config;
-
-    ctx.accounts.user_allocation.set_quota(usdt_amount);
 
     emit!(crate::events::UserAuthorizedEvent {
         user: ctx.accounts.user.key(),
@@ -137,6 +134,86 @@ pub fn handle_cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Resu
         "Airdrop allocation for user {} cancelled by admin. Rent 100% refunded to user. Allocation {} was not counted as confirmed.",
         ctx.accounts.user.key(),
         refunded_usdt
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// 4. Admin Batch Authorizes multiple users (single transaction, user PDAs via remaining accounts)
+// -----------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct AuthorizeUsers<'info> {
+    pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [GLOBAL_CONFIG_SEED],
+        bump = global_config.bump,
+        has_one = admin @ ErrorCode::Unauthorized
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
+}
+
+pub fn handle_batch_authorize_users(
+    ctx: Context<AuthorizeUsers>,
+    users: Vec<Pubkey>,
+    amounts: Vec<u64>,
+) -> Result<()> {
+    require!(users.len() == amounts.len(), ErrorCode::BatchLengthMismatch);
+    require!(
+        !users.is_empty() && users.len() <= MAX_BATCH_USERS,
+        ErrorCode::BatchTooLarge
+    );
+
+    let mut seen = HashSet::new();
+
+    for (i, (user, amount)) in users.iter().zip(amounts.iter()).enumerate() {
+        // Reject duplicate users within one batch
+        require!(seen.insert(*user), ErrorCode::DuplicateUserInBatch);
+
+        // Each user's allocation PDA must arrive as remaining_accounts[i], in order
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[USER_ALLOCATION_SEED, user.as_ref()],
+            ctx.program_id,
+        );
+        let acc_info = ctx
+            .remaining_accounts
+            .get(i)
+            .ok_or(ErrorCode::UserAllocationNotFound)?;
+        require!(
+            acc_info.key() == expected_pda && acc_info.owner == ctx.program_id,
+            ErrorCode::UserAllocationNotFound
+        );
+
+        // Deserialize manually (owner already verified above; Account::exit was
+        // removed in anchor-lang 1.x so write-back is manual too)
+        let mut data = acc_info.try_borrow_mut_data()?;
+        let mut data_ref: &[u8] = &data[..];
+        let mut user_allocation = UserAllocation::try_deserialize_unchecked(&mut data_ref)?;
+
+        // Single enforcement point: zero-quota / set-once / claimed invariants
+        user_allocation.set_quota(*amount)?;
+
+        // Write back discriminator + fields in place
+        let mut dst: &mut [u8] = &mut data;
+        user_allocation.try_serialize(&mut dst)?;
+
+        emit!(crate::events::UserAuthorizedEvent {
+            user: *user,
+            usdt_amount: *amount,
+            total_authorized: ctx.accounts.global_config.total_authorized_usdt,
+        });
+    }
+
+    let total_quota = amounts
+        .iter()
+        .try_fold(0u64, |acc, &a| acc.checked_add(a).ok_or(ErrorCode::MathOverflow))?;
+
+    msg!(
+        "Batch authorized {} users, total USDT quota: {} raw units",
+        users.len(),
+        total_quota
     );
     Ok(())
 }

@@ -52,6 +52,8 @@ pub struct Claim<'info> {
 pub fn handle_claim(ctx: Context<Claim>) -> Result<()> {
     let usdt_amount_raw = ctx.accounts.user_allocation.usdt_amount;
 
+    require!(usdt_amount_raw > 0, ErrorCode::ZeroQuota);
+
     // 1. Delegate math calculation & byte decoding through deep PriceMath module
     let lb_pair_data = ctx.accounts.lb_pair.try_borrow_data()?;
     let output = PriceMath::calculate_whx_airdrop(&lb_pair_data, usdt_amount_raw)?;

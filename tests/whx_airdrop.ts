@@ -444,4 +444,420 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
       expect(err.toString()).to.include("InvalidPoolAccount");
     }
   });
+
+  // ============================================================
+  // Batch Authorization & Set-once Quota Semantics
+  // ============================================================
+
+  // Fresh user with SOL rent + initialized allocation PDA
+  async function createUserWithAllocation(): Promise<{
+    keypair: Keypair;
+    allocationPda: PublicKey;
+  }> {
+    const keypair = Keypair.generate();
+    const airdropTx = await provider.connection.requestAirdrop(
+      keypair.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    const latestBlockhash = await provider.connection.getLatestBlockhash();
+    await provider.connection.confirmTransaction({
+      signature: airdropTx,
+      ...latestBlockhash,
+    });
+
+    const [allocationPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), keypair.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .initUserAllocation()
+      .accountsPartial({
+        user: keypair.publicKey,
+        userAllocation: allocationPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([keypair])
+      .rpc();
+
+    return { keypair, allocationPda };
+  }
+
+  it("Step 8: 批量授权 3 用户成功 (单交易)", async () => {
+    const batchUsers = [
+      await createUserWithAllocation(),
+      await createUserWithAllocation(),
+      await createUserWithAllocation(),
+    ];
+
+    const users = batchUsers.map((e) => e.keypair.publicKey);
+    const amounts = [new anchor.BN(10_000_000), new anchor.BN(20_000_000), new anchor.BN(30_000_000)];
+
+    await program.methods
+      .batchAuthorizeUsers(users, amounts)
+      .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+      .remainingAccounts(
+        batchUsers.map((e) => ({ pubkey: e.allocationPda, isSigner: false, isWritable: true }))
+      )
+      .signers([admin])
+      .rpc();
+
+    for (const [i, e] of batchUsers.entries()) {
+      const accountData = await program.account.userAllocation.fetch(e.allocationPda);
+      expect(accountData.usdtAmount.toNumber()).to.equal(10_000_000 * (i + 1));
+      expect(accountData.claimed).to.equal(false);
+    }
+  });
+
+  it("Step 9: 批量授权非 Admin 攻击被拒", async () => {
+    const target = await createUserWithAllocation();
+
+    try {
+      await program.methods
+        .batchAuthorizeUsers([target.keypair.publicKey], [new anchor.BN(1_000_000)])
+        .accountsPartial({ admin: attacker.publicKey, globalConfig: globalConfigPda })
+        .remainingAccounts([
+          { pubkey: target.allocationPda, isSigner: false, isWritable: true },
+        ])
+        .signers([attacker])
+        .rpc();
+      expect.fail("Attacker batchAuthorizeUsers should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("Unauthorized");
+    }
+  });
+
+  it("Step 10: 批量参数长度不一致被拒", async () => {
+    try {
+      await program.methods
+        .batchAuthorizeUsers(
+          [Keypair.generate().publicKey, Keypair.generate().publicKey],
+          [new anchor.BN(1_000_000)]
+        )
+        .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+        .signers([admin])
+        .rpc();
+      expect.fail("Length mismatch should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("BatchLengthMismatch");
+    }
+  });
+
+  it("Step 11: 批量超过 10 人被拒", async () => {
+    const elevenUsers = Array.from({ length: 11 }, () => Keypair.generate().publicKey);
+    const elevenAmounts = elevenUsers.map(() => new anchor.BN(1_000_000));
+
+    try {
+      await program.methods
+        .batchAuthorizeUsers(elevenUsers, elevenAmounts)
+        .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+        .signers([admin])
+        .rpc();
+      expect.fail("Batch > 10 users should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("BatchTooLarge");
+    }
+  });
+
+  it("Step 12: 批量重复用户被拒", async () => {
+    const dup = await createUserWithAllocation();
+
+    try {
+      await program.methods
+        .batchAuthorizeUsers(
+          [dup.keypair.publicKey, dup.keypair.publicKey],
+          [new anchor.BN(1_000_000), new anchor.BN(2_000_000)]
+        )
+        .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+        .remainingAccounts([
+          { pubkey: dup.allocationPda, isSigner: false, isWritable: true },
+        ])
+        .signers([admin])
+        .rpc();
+      expect.fail("Duplicate user in batch should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("DuplicateUserInBatch");
+    }
+
+    // Transaction reverted: quota must not have been written
+    const accountData = await program.account.userAllocation.fetch(dup.allocationPda);
+    expect(accountData.usdtAmount.toNumber()).to.equal(0);
+  });
+
+  it("Step 13: 批量用户分配 PDA 不存在被拒", async () => {
+    const ghostUser = Keypair.generate();
+    const [ghostAllocationPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), ghostUser.publicKey.toBuffer()],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .batchAuthorizeUsers([ghostUser.publicKey], [new anchor.BN(1_000_000)])
+        .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+        .remainingAccounts([
+          { pubkey: ghostAllocationPda, isSigner: false, isWritable: true },
+        ])
+        .signers([admin])
+        .rpc();
+      expect.fail("Missing allocation PDA should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("UserAllocationNotFound");
+    }
+  });
+
+  it("Step 14: 已授权用户再次授权被拒 (单次, set-once)", async () => {
+    const reauth = await createUserWithAllocation();
+
+    await program.methods
+      .authorizeUser(new anchor.BN(5_000_000))
+      .accountsPartial({
+        admin: admin.publicKey,
+        user: reauth.keypair.publicKey,
+        globalConfig: globalConfigPda,
+        userAllocation: reauth.allocationPda,
+      })
+      .signers([admin])
+      .rpc();
+
+    try {
+      await program.methods
+        .authorizeUser(new anchor.BN(1_000_000))
+        .accountsPartial({
+          admin: admin.publicKey,
+          user: reauth.keypair.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: reauth.allocationPda,
+        })
+        .signers([admin])
+        .rpc();
+      expect.fail("Re-authorization should fail with QuotaAlreadySet");
+    } catch (err: any) {
+      expect(err.toString()).to.include("QuotaAlreadySet");
+    }
+
+    // Original quota preserved
+    const accountData = await program.account.userAllocation.fetch(reauth.allocationPda);
+    expect(accountData.usdtAmount.toNumber()).to.equal(5_000_000);
+  });
+
+  it("Step 15: 0 金额授权被拒 (单次)", async () => {
+    const zeroUser = await createUserWithAllocation();
+
+    try {
+      await program.methods
+        .authorizeUser(new anchor.BN(0))
+        .accountsPartial({
+          admin: admin.publicKey,
+          user: zeroUser.keypair.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: zeroUser.allocationPda,
+        })
+        .signers([admin])
+        .rpc();
+      expect.fail("Zero quota authorize should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("ZeroQuota");
+    }
+  });
+
+  it("Step 16: 批量原子性 - 含已授权用户整体回滚", async () => {
+    const fresh = await createUserWithAllocation();
+    const alreadyAuthorized = await createUserWithAllocation();
+
+    await program.methods
+      .authorizeUser(new anchor.BN(7_000_000))
+      .accountsPartial({
+        admin: admin.publicKey,
+        user: alreadyAuthorized.keypair.publicKey,
+        globalConfig: globalConfigPda,
+        userAllocation: alreadyAuthorized.allocationPda,
+      })
+      .signers([admin])
+      .rpc();
+
+    try {
+      await program.methods
+        .batchAuthorizeUsers(
+          [fresh.keypair.publicKey, alreadyAuthorized.keypair.publicKey],
+          [new anchor.BN(1_000_000), new anchor.BN(9_000_000)]
+        )
+        .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+        .remainingAccounts([
+          { pubkey: fresh.allocationPda, isSigner: false, isWritable: true },
+          { pubkey: alreadyAuthorized.allocationPda, isSigner: false, isWritable: true },
+        ])
+        .signers([admin])
+        .rpc();
+      expect.fail("Batch containing an already-authorized user should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("QuotaAlreadySet");
+    }
+
+    // Atomicity: the leading fresh user's quota was not written
+    const freshData = await program.account.userAllocation.fetch(fresh.allocationPda);
+    expect(freshData.usdtAmount.toNumber()).to.equal(0);
+  });
+
+  it("Step 17: 批量 0 金额被拒", async () => {
+    const zeroBatchUser = await createUserWithAllocation();
+
+    try {
+      await program.methods
+        .batchAuthorizeUsers([zeroBatchUser.keypair.publicKey], [new anchor.BN(0)])
+        .accountsPartial({ admin: admin.publicKey, globalConfig: globalConfigPda })
+        .remainingAccounts([
+          { pubkey: zeroBatchUser.allocationPda, isSigner: false, isWritable: true },
+        ])
+        .signers([admin])
+        .rpc();
+      expect.fail("Batch with zero quota should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("ZeroQuota");
+    }
+  });
+
+  it("Step 18: 已 claim 用户授权被拒 (优先级不变)", async () => {
+    // user1 was claimed in Step 3; claimed check must still fire first
+    const [user1AllocationPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), user1.publicKey.toBuffer()],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .authorizeUser(new anchor.BN(1_000_000))
+        .accountsPartial({
+          admin: admin.publicKey,
+          user: user1.publicKey,
+          globalConfig: globalConfigPda,
+          userAllocation: user1AllocationPda,
+        })
+        .signers([admin])
+        .rpc();
+      expect.fail("Authorizing a claimed user should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("AlreadyClaimed");
+    }
+  });
+
+  // ============================================================
+  // Vault Full Withdrawal (admin-only)
+  // ============================================================
+
+  it("Step 19: 管理员全量提取金库 WHX 至指定钱包", async () => {
+    const vaultBefore = await getAccount(provider.connection, whxVault);
+    const vaultAmountBefore = Number(vaultBefore.amount);
+    expect(vaultAmountBefore).to.be.greaterThan(0);
+
+    // Recipient: any wallet's WHX token account (owner need not be admin)
+    const recipientOwner = Keypair.generate();
+    const recipientAccount = await createAccount(
+      provider.connection,
+      admin,
+      whxMint,
+      recipientOwner.publicKey,
+      Keypair.generate()
+    );
+
+    await program.methods
+      .withdrawVault()
+      .accountsPartial({
+        admin: admin.publicKey,
+        globalConfig: globalConfigPda,
+        whxVault: whxVault,
+        recipient: recipientAccount,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([admin])
+      .rpc();
+
+    const vaultAfter = await getAccount(provider.connection, whxVault);
+    expect(Number(vaultAfter.amount)).to.equal(0);
+
+    const recipientAfter = await getAccount(provider.connection, recipientAccount);
+    expect(Number(recipientAfter.amount)).to.equal(vaultAmountBefore);
+  });
+
+  it("Step 20: 非 Admin 提取被拒", async () => {
+    const recipientAccount = await createAccount(
+      provider.connection,
+      admin,
+      whxMint,
+      attacker.publicKey,
+      Keypair.generate()
+    );
+
+    try {
+      await program.methods
+        .withdrawVault()
+        .accountsPartial({
+          admin: attacker.publicKey,
+          globalConfig: globalConfigPda,
+          whxVault: whxVault,
+          recipient: recipientAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([attacker])
+        .rpc();
+      expect.fail("Attacker withdrawVault should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("Unauthorized");
+    }
+  });
+
+  it("Step 21: recipient mint 不匹配被拒", async () => {
+    // usdtMint token account passed as recipient -> mint mismatch
+    const wrongMintAccount = await createAccount(
+      provider.connection,
+      admin,
+      usdtMint,
+      attacker.publicKey,
+      Keypair.generate()
+    );
+
+    try {
+      await program.methods
+        .withdrawVault()
+        .accountsPartial({
+          admin: admin.publicKey,
+          globalConfig: globalConfigPda,
+          whxVault: whxVault,
+          recipient: wrongMintAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([admin])
+        .rpc();
+      expect.fail("Withdraw to non-WHX account should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("InvalidRecipient");
+    }
+  });
+
+  it("Step 22: 空金库提取被拒", async () => {
+    const recipientAccount = await createAccount(
+      provider.connection,
+      admin,
+      whxMint,
+      admin.publicKey,
+      Keypair.generate()
+    );
+
+    try {
+      await program.methods
+        .withdrawVault()
+        .accountsPartial({
+          admin: admin.publicKey,
+          globalConfig: globalConfigPda,
+          whxVault: whxVault,
+          recipient: recipientAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([admin])
+        .rpc();
+      expect.fail("Withdraw from empty vault should fail");
+    } catch (err: any) {
+      expect(err.toString()).to.include("ZeroBalance");
+    }
+  });
 });

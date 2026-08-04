@@ -59,11 +59,9 @@ impl UserAllocation {
         self.bump = bump;
         self.claimed = false;
         self.claimed_amount = 0;
-    }
-
-    /// Deep domain method: Set a user's USDT allocation quota.
-    /// Set-once semantics: a non-zero quota cannot be overwritten; to change a quota,
-    /// admin must cancel (closes PDA, refunds rent) and the user re-initializes.
+    }    /// Deep domain method: Set a user's USDT allocation quota.
+    /// Set-once semantics: a non-zero quota cannot be overwritten and there is
+    /// no cancel instruction — an erroneous authorization cannot be revoked.
     pub fn set_quota(&mut self, usdt_amount: u64) -> Result<()> {
         require!(
             !self.claimed,
@@ -87,5 +85,59 @@ impl UserAllocation {
         self.claimed = true;
         self.claimed_amount = claimed_amount;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anchor_lang::error::Error as AnchorLangError;
+
+    fn fresh_allocation() -> UserAllocation {
+        UserAllocation {
+            usdt_amount: 0,
+            bump: 255,
+            claimed: false,
+            claimed_amount: 0,
+        }
+    }
+
+    fn error_code(err: AnchorLangError) -> String {
+        match err {
+            AnchorLangError::AnchorError(e) => e.error_name,
+            other => panic!("unexpected error variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn set_quota_sets_zero_quota_allocation() {
+        let mut alloc = fresh_allocation();
+        alloc.set_quota(1_000_000).unwrap();
+        assert_eq!(alloc.usdt_amount, 1_000_000);
+        assert!(!alloc.claimed);
+    }
+
+    #[test]
+    fn set_quota_rejects_zero_amount() {
+        let mut alloc = fresh_allocation();
+        let err = alloc.set_quota(0).unwrap_err();
+        assert_eq!(error_code(err), "ZeroQuota");
+    }
+
+    #[test]
+    fn set_quota_rejects_existing_quota() {
+        let mut alloc = fresh_allocation();
+        alloc.set_quota(5_000_000).unwrap();
+        let err = alloc.set_quota(1_000_000).unwrap_err();
+        assert_eq!(error_code(err), "QuotaAlreadySet");
+    }
+
+    #[test]
+    fn set_quota_rejects_claimed_allocation() {
+        let mut alloc = fresh_allocation();
+        alloc.claimed = true;
+        alloc.usdt_amount = 5_000_000;
+        let err = alloc.set_quota(1_000_000).unwrap_err();
+        assert_eq!(error_code(err), "AlreadyClaimed");
     }
 }

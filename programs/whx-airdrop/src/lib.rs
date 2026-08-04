@@ -59,12 +59,7 @@ pub mod whx_airdrop {
         instructions::allocation::handle_batch_authorize_users(ctx, users, amounts)
     }
 
-    /// Cancel/reject user allocation quota (Admin only, refunds 100% rent to user).
-    pub fn cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Result<()> {
-        instructions::allocation::handle_cancel_user_allocation(ctx)
-    }
-
-    /// User claims WHX airdrop tokens based on real-time Meteora DLMM LbPair price (refunds 100% rent to user).
+    /// User claims WHX airdrop tokens based on real-time Meteora DLMM LbPair price (PDA closed after claim).
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
         instructions::claim::handle_claim(ctx)
     }

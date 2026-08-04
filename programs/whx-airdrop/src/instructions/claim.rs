@@ -22,6 +22,7 @@ pub struct Claim<'info> {
 
     #[account(
         mut,
+        close = user,
         seeds = [USER_ALLOCATION_SEED, user.key().as_ref()],
         bump = user_allocation.bump
     )]
@@ -91,7 +92,7 @@ pub fn handle_claim(ctx: Context<Claim>) -> Result<()> {
     });
 
     msg!(
-        "Claim successful! Active ID: {}, Bin Step: {}, Price Scaled (10^9): {}, WHX Amount: {}. Allocation PDA retained as claimed receipt.",
+        "Claim successful! Active ID: {}, Bin Step: {}, Price Scaled (10^9): {}, WHX Amount: {}. Allocation PDA closed, rent refunded to user.",
         output.active_id,
         output.bin_step,
         output.price_scaled,

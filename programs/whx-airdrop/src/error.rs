@@ -26,7 +26,7 @@ pub enum ErrorCode {
     #[msg("ZeroQuota: USDT quota must be greater than zero")]
     ZeroQuota,
 
-    #[msg("QuotaAlreadySet: User already has an authorized quota; cancel first to re-authorize")]
+    #[msg("QuotaAlreadySet: User already has an authorized quota; quota is set-once and irrevocable")]
     QuotaAlreadySet,
 
     #[msg("BatchLengthMismatch: users and amounts vectors must have the same length")]
@@ -41,6 +41,6 @@ pub enum ErrorCode {
     #[msg("DuplicateUserInBatch: The same user appears more than once in the batch")]
     DuplicateUserInBatch,
 
-    #[msg("InvalidRecipient: Recipient token account mint does not match WHX mint")]
+    #[msg("InvalidRecipient: Recipient token account is invalid (mint mismatch or identical to vault)")]
     InvalidRecipient,
 }

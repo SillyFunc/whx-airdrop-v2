@@ -38,6 +38,12 @@ pub struct WithdrawVault<'info> {
 /// Unclaimed quotas are naturally blocked afterwards by the claim-time
 /// InsufficientVaultBalance check.
 pub fn handle_withdraw_vault(ctx: Context<WithdrawVault>) -> Result<()> {
+    // Duplicate mutable account guard: self-transfer is a no-op, reject it
+    require!(
+        ctx.accounts.recipient.key() != ctx.accounts.whx_vault.key(),
+        ErrorCode::InvalidRecipient
+    );
+
     let amount = ctx.accounts.whx_vault.amount;
     require!(amount > 0, ErrorCode::ZeroBalance);
 

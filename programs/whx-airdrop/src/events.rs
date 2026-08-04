@@ -16,13 +16,6 @@ pub struct UserClaimedEvent {
     pub whx_amount: u64,
 }
 
-/// Emitted when Admin cancels user allocation.
-#[event]
-pub struct UserCancelledEvent {
-    pub user: Pubkey,
-    pub refunded_usdt: u64,
-}
-
 /// Emitted when Admin withdraws the full WHX vault balance to a recipient.
 #[event]
 pub struct WithdrawEvent {

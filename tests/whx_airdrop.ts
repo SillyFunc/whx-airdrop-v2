@@ -21,7 +21,6 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
   const admin = Keypair.generate();
   const attacker = Keypair.generate();
   const user1 = Keypair.generate();
-  const user2 = Keypair.generate();
 
   let whxMint: PublicKey;
   let usdtMint: PublicKey;
@@ -34,7 +33,7 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
   const realMarketLbPairPubkey = new PublicKey("6nDd6Y4SEpURbzArtg3GffL2Ltw16FD2SMKfyUnX7SXf");
 
   before(async () => {
-    const signers = [admin, attacker, user1, user2];
+    const signers = [admin, attacker, user1];
     for (const s of signers) {
       const airdropTx = await provider.connection.requestAirdrop(s.publicKey, 10 * LAMPORTS_PER_SOL);
       const latestBlockhash = await provider.connection.getLatestBlockhash();
@@ -178,11 +177,12 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
       .rpc();
 
     const user1BalanceAfter = await provider.connection.getBalance(user1.publicKey);
-    expect(user1BalanceAfter).to.be.greaterThan(user1BalanceBefore - 0.0001 * LAMPORTS_PER_SOL);
+    // PDA 销毁 + 租金 100% 退还 → 领取后余额高于领取前
+    expect(user1BalanceAfter).to.be.greaterThan(user1BalanceBefore);
 
-    const allocationData = await program.account.userAllocation.fetch(user1AllocationPda);
-    expect(allocationData.claimed).to.equal(true);
-    expect(allocationData.claimedAmount.toNumber()).to.be.greaterThan(0);
+    // Claim 后 UserAllocation PDA 被销毁 (close = user)
+    const closedPdaInfo = await provider.connection.getAccountInfo(user1AllocationPda);
+    expect(closedPdaInfo).to.be.null;
 
     const globalData = await program.account.globalConfig.fetch(globalConfigPda);
     expect(globalData.totalAuthorizedUsdt.toNumber()).to.equal(10_000_000);
@@ -201,9 +201,10 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
         })
         .signers([user1])
         .rpc();
-      expect.fail("A claimed allocation must not be claimable again");
+      expect.fail("Claim after PDA closed must fail");
     } catch (err: any) {
-      expect(err.toString()).to.include("AlreadyClaimed");
+      // PDA 已销毁，无法再次 claim
+      expect(err.toString()).to.include("AccountNotInitialized");
     }
 
     const user1WhxBalance = await getAccount(provider.connection, user1WhxAccount);
@@ -219,51 +220,6 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     console.log("=======================================================\n");
 
     expect(rawWhx).to.be.closeTo(77_521_962, 1_000_000);
-  });
-
-  it("Step 4: 管理员驳回 User2 申请 (销毁 PDA，~0.00146 SOL 租金 100% 退还 User2)", async () => {
-    const [user2AllocationPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("user_allocation"), user2.publicKey.toBuffer()],
-      program.programId
-    );
-
-    // User2 initializes PDA
-    await program.methods
-      .initUserAllocation()
-      .accountsPartial({
-        user: user2.publicKey,
-        userAllocation: user2AllocationPda,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([user2])
-      .rpc();
-
-    const user2BalanceBeforeCancel = await provider.connection.getBalance(user2.publicKey);
-
-    // Admin rejects / cancels User2's allocation
-    await program.methods
-      .cancelUserAllocation()
-      .accountsPartial({
-        admin: admin.publicKey,
-        user: user2.publicKey,
-        globalConfig: globalConfigPda,
-        userAllocation: user2AllocationPda,
-      })
-      .signers([admin])
-      .rpc();
-
-    const user2BalanceAfterCancel = await provider.connection.getBalance(user2.publicKey);
-    expect(user2BalanceAfterCancel).to.be.greaterThan(user2BalanceBeforeCancel);
-
-    const closedPdaInfo = await provider.connection.getAccountInfo(user2AllocationPda);
-    expect(closedPdaInfo).to.be.null;
-
-    console.log("=======================================================");
-    console.log("🛑 步骤 4/4: 管理员 (Admin) 后台驳回 User2 空投申请");
-    console.log("-------------------------------------------------------");
-    console.log("· 管理员驳回申请，调 cancelUserAllocation 销毁 PDA");
-    console.log("· 租金退还结果: User2 垫付的 ~0.00146 SOL 租金已 100% 全额退还给 User2 钱包");
-    console.log("=======================================================\n");
   });
 
   it("Step 5: 33,000 USDT 链上死门硬熔断拦截测试 (超额领取被拒)", async () => {
@@ -717,8 +673,8 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     }
   });
 
-  it("Step 18: 已 claim 用户授权被拒 (优先级不变)", async () => {
-    // user1 was claimed in Step 3; claimed check must still fire first
+  it("Step 18: 已 claim 用户（PDA 已销毁）授权被拒", async () => {
+    // user1 claimed in Step 3 -> PDA destroyed; authorize must fail on missing account
     const [user1AllocationPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("user_allocation"), user1.publicKey.toBuffer()],
       program.programId
@@ -735,9 +691,9 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
         })
         .signers([admin])
         .rpc();
-      expect.fail("Authorizing a claimed user should fail");
+      expect.fail("Authorizing a user whose PDA was closed should fail");
     } catch (err: any) {
-      expect(err.toString()).to.include("AlreadyClaimed");
+      expect(err.toString()).to.include("AccountNotInitialized");
     }
   });
 
@@ -859,5 +815,32 @@ describe("whx_airdrop User-Funded Allocation Lifecycle & Deep PriceMath Engine T
     } catch (err: any) {
       expect(err.toString()).to.include("ZeroBalance");
     }
+  });
+
+  it("Step 23: claim 后 PDA 地址已释放，可重新开户 (防重复领取靠 Admin 授权把关)", async () => {
+    const [user1AllocationPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_allocation"), user1.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // user1 在 Step 3 claim 后 PDA 已销毁
+    const closedInfo = await provider.connection.getAccountInfo(user1AllocationPda);
+    expect(closedInfo).to.be.null;
+
+    // PDA 地址释放后用户可重新开户；重复领取的防线是 admin 不再授权
+    // (authorizeUser / batchAuthorizeUsers 均为 admin-only)
+    await program.methods
+      .initUserAllocation()
+      .accountsPartial({
+        user: user1.publicKey,
+        userAllocation: user1AllocationPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([user1])
+      .rpc();
+
+    const reinitData = await program.account.userAllocation.fetch(user1AllocationPda);
+    expect(reinitData.usdtAmount.toNumber()).to.equal(0);
+    expect(reinitData.claimed).to.equal(false);
   });
 });

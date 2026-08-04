@@ -89,57 +89,7 @@ pub fn handle_authorize_user(ctx: Context<AuthorizeUser>, usdt_amount: u64) -> R
 }
 
 // -----------------------------------------------------------------------------
-// 3. Admin Cancels/Rejects User Allocation (PDA closed, rent 100% refunded to User)
-// -----------------------------------------------------------------------------
-
-#[derive(Accounts)]
-pub struct CancelUserAllocation<'info> {
-    pub admin: Signer<'info>,
-
-    /// CHECK: User wallet receiving full rent refund
-    #[account(mut)]
-    pub user: UncheckedAccount<'info>,
-
-    #[account(
-        mut,
-        seeds = [GLOBAL_CONFIG_SEED],
-        bump = global_config.bump,
-        has_one = admin @ ErrorCode::Unauthorized
-    )]
-    pub global_config: Account<'info, GlobalConfig>,
-
-    #[account(
-        mut,
-        seeds = [USER_ALLOCATION_SEED, user.key().as_ref()],
-        bump = user_allocation.bump,
-        close = user
-    )]
-    pub user_allocation: Account<'info, UserAllocation>,
-}
-
-pub fn handle_cancel_user_allocation(ctx: Context<CancelUserAllocation>) -> Result<()> {
-    require!(
-        !ctx.accounts.user_allocation.claimed,
-        ErrorCode::AlreadyClaimed
-    );
-
-    let refunded_usdt = ctx.accounts.user_allocation.usdt_amount;
-
-    emit!(crate::events::UserCancelledEvent {
-        user: ctx.accounts.user.key(),
-        refunded_usdt,
-    });
-
-    msg!(
-        "Airdrop allocation for user {} cancelled by admin. Rent 100% refunded to user. Allocation {} was not counted as confirmed.",
-        ctx.accounts.user.key(),
-        refunded_usdt
-    );
-    Ok(())
-}
-
-// -----------------------------------------------------------------------------
-// 4. Admin Batch Authorizes multiple users (single transaction, user PDAs via remaining accounts)
+// 3. Admin Batch Authorizes multiple users (single transaction, user PDAs via remaining accounts)
 // -----------------------------------------------------------------------------
 
 #[derive(Accounts)]
@@ -186,11 +136,12 @@ pub fn handle_batch_authorize_users(
             ErrorCode::UserAllocationNotFound
         );
 
-        // Deserialize manually (owner already verified above; Account::exit was
-        // removed in anchor-lang 1.x so write-back is manual too)
+        // Deserialize manually (owner + PDA key verified above; discriminator is
+        // checked by try_deserialize; Account::exit was removed in anchor-lang 1.x
+        // so write-back is manual too)
         let mut data = acc_info.try_borrow_mut_data()?;
         let mut data_ref: &[u8] = &data[..];
-        let mut user_allocation = UserAllocation::try_deserialize_unchecked(&mut data_ref)?;
+        let mut user_allocation = UserAllocation::try_deserialize(&mut data_ref)?;
 
         // Single enforcement point: zero-quota / set-once / claimed invariants
         user_allocation.set_quota(*amount)?;
